@@ -1,0 +1,34 @@
+import { useState, useEffect } from 'react';
+
+const API_URL = 'http://localhost:8000/api';
+
+export function useHotspots(source = 'live') {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchHotspots = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/hotspots?source=${source}&limit=2000`);
+      if (!response.ok) throw new Error('Failed to fetch hotspots');
+      const result = await response.json();
+      setData(result);
+      setError(null);
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchHotspots();
+    // Auto refresh every 60s
+    const interval = setInterval(fetchHotspots, 60000);
+    return () => clearInterval(interval);
+  }, [source]);
+
+  return { data, loading, error, refetch: fetchHotspots };
+}
