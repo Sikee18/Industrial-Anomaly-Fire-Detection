@@ -1,24 +1,24 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet.heat';
-import { Flame, Factory, Layers } from 'lucide-react';
+import { Flame, Factory } from 'lucide-react';
 
-// ── Tile layer configs ───────────────────────────────────────────────────────
-const BASEMAPS = {
-  heatmap: {
-    url: 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',
-    labels: 'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; OpenStreetMap &copy; CARTO',
-  },
-  satellite: {
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    labels: null,
-    attribution: 'Tiles &copy; Esri',
-  },
-};
+// ── Constants ─────────────────────────────────────────────────────────────────
+const INDIA_CENTER  = [22.5, 82.5];
+const INDIA_ZOOM    = 5;
+const INDIA_BOUNDS  = [[6.5, 68.0], [37.5, 97.5]];
+const MARKER_MIN_ZOOM = 7; // markers only appear when zoomed in this far
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Tile layers ───────────────────────────────────────────────────────────────
+// Heatmap basemap: CartoDB Positron NO-labels (ultra-clean, no competing text)
+const HEATMAP_TILES   = 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
+// City/border labels only — placed above heatmap so cities are still readable
+const LABEL_TILES     = 'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png';
+// Satellite basemap
+const SATELLITE_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+
+// ── Marker helpers ────────────────────────────────────────────────────────────
 const CATEGORY_MAP = {
   'Industrial Fire':         { cls: 'marker-industrial', emoji: '🏭', size: 16 },
   'Gas Flare':               { cls: 'marker-gasflare',   emoji: '🔥', size: 14 },
@@ -56,50 +56,101 @@ const facilityDivIcon = new L.DivIcon({
 });
 
 // ── Heatmap Layer ─────────────────────────────────────────────────────────────
-function HeatmapLayer({ hotspots }) {
+function HeatmapLayer({ hotspots, isVisible }) {
   const map = useMap();
   const heatRef = useRef(null);
 
   useEffect(() => {
-    if (!map || hotspots.length === 0) return;
-    const points = hotspots.map(h => [
-      h.geometry.coordinates[1],
-      h.geometry.coordinates[0],
-      Math.min(1.0, (h.properties.frp || 10) / 100),
-    ]);
-    if (heatRef.current) map.removeLayer(heatRef.current);
-    heatRef.current = L.heatLayer(points, {
-      radius: 30, blur: 22, maxZoom: 11, max: 1.0, minOpacity: 0.35,
-      gradient: {
-        0.0: '#0d0221', 0.15: '#3d0b71', 0.3: '#8b1a8f',
-        0.5: '#d64045', 0.7: '#f7821b', 0.85: '#fbbf24', 1.0: '#fefce8',
-      },
-    }).addTo(map);
-    return () => { if (heatRef.current) map.removeLayer(heatRef.current); };
-  }, [map, hotspots]);
+    if (!map) return;
+
+    const points = hotspots.map(h => {
+      const frp = h.properties.frp || 0;
+      const intensity = frp < 5 ? 0.05 : Math.min(1.0, frp / 120);
+      return [h.geometry.coordinates[1], h.geometry.coordinates[0], intensity];
+    });
+
+    if (!heatRef.current) {
+      // First initialization
+      heatRef.current = L.heatLayer(points, {
+        radius:     18,
+        blur:       12,
+        maxZoom:    12,
+        max:        1.0,
+        minOpacity: 0.25,
+        gradient: {
+          0.00: '#0d0221', 0.15: '#3d0b71', 0.32: '#8b1a8f',
+          0.52: '#d64045', 0.70: '#f7821b', 0.87: '#fbbf24', 1.00: '#fefce8',
+        },
+      });
+    } else {
+      // Avoid recreating the layer on zoom, just update the data points
+      heatRef.current.setLatLngs(points);
+    }
+
+    // Handle visibility by adding/removing from map directly
+    if (isVisible) {
+      if (!map.hasLayer(heatRef.current)) {
+        heatRef.current.addTo(map);
+      }
+    } else {
+      if (map.hasLayer(heatRef.current)) {
+        map.removeLayer(heatRef.current);
+      }
+    }
+  }, [map, hotspots, isVisible]);
+
+  // Clean up layer fully if component unmounts entirely
+  useEffect(() => {
+    return () => {
+      if (heatRef.current && map) {
+        map.removeLayer(heatRef.current);
+      }
+    };
+  }, [map]);
 
   return null;
 }
 
-// ── Basemap switcher ─────────────────────────────────────────────────────────
-function BasemapLayer({ mode }) {
-  const cfg = BASEMAPS[mode];
+// ViewResetController removed: map state is now fully preserved between mode switches.
+
+// ── Zoom to India Button ──────────────────────────────────────────────────────
+function ZoomResetButton() {
+  const map = useMap();
   return (
-    <>
-      <TileLayer url={cfg.url} attribution={cfg.attribution} />
-      {cfg.labels && (
-        <TileLayer url={cfg.labels} attribution="" pane="overlayPane" zIndex={500} />
-      )}
-    </>
+    <button 
+      onClick={() => map.fitBounds(INDIA_BOUNDS, { animate: true, duration: 0.8 })}
+      className="absolute top-4 right-4 z-[1000] glass-panel px-3 py-2 rounded-lg text-xs font-semibold text-slate-200 hover:text-white hover:bg-slate-700/80 shadow-lg flex items-center gap-2 transition-all hover:scale-105"
+      title="Reset view to full India"
+    >
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+      Zoom to India
+    </button>
   );
 }
 
-// ── Map pan controller ────────────────────────────────────────────────────────
+// ── Auto-pan to selected hotspot ──────────────────────────────────────────────
 function MapController({ center, selectedId }) {
   const map = useMap();
   useEffect(() => {
     if (center && selectedId) map.flyTo(center, 13, { duration: 1.5 });
-  }, [center, selectedId, map]);
+    // We intentionally omit `center` from dependencies because passing it as an inline array 
+    // from the parent causes the effect to re-run on every zoom tick, fighting the user.
+    // Reacting only to `selectedId` is correct because we only want to fly when a NEW hotspot is selected.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, map]);
+  return null;
+}
+
+// ── Zoom-aware marker visibility ──────────────────────────────────────────────
+// Subscribes to zoom events and tells parent whether markers should show
+function ZoomWatcher({ onZoomChange }) {
+  const map = useMap();
+  useEffect(() => {
+    const handler = () => onZoomChange(map.getZoom());
+    map.on('zoomend', handler);
+    onZoomChange(map.getZoom()); // initial
+    return () => map.off('zoomend', handler);
+  }, [map, onZoomChange]);
   return null;
 }
 
@@ -113,28 +164,28 @@ function Legend({ mode }) {
     { label: 'Wildfire',          emoji: '🌲', color: '#b91c1c' },
     { label: 'Unclassified',      emoji: '❓', color: '#94a3b8' },
   ];
-
   return (
     <div className="absolute bottom-6 left-4 z-[1000] glass-panel rounded-xl px-4 py-3 shadow-2xl text-slate-200">
       <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-        {mode === 'heatmap' ? 'Thermal Intensity' : 'Classification'}
+        {mode === 'heatmap' ? 'Thermal Intensity (FRP)' : 'Classification'}
       </div>
-
       {mode === 'heatmap' ? (
         <>
-          <div className="h-4 w-40 rounded" style={{
-            background: 'linear-gradient(to right, #0d0221, #3d0b71, #8b1a8f, #d64045, #f7821b, #fbbf24, #fefce8)',
+          <div className="h-3.5 w-40 rounded" style={{
+            background: 'linear-gradient(to right, #0d0221,#3d0b71,#8b1a8f,#d64045,#f7821b,#fbbf24,#fefce8)',
           }} />
           <div className="flex justify-between text-[10px] text-slate-400 mt-1">
-            <span>Low FRP</span><span>High FRP</span>
+            <span>Low</span><span>High</span>
           </div>
+          <div className="mt-2 text-[10px] text-slate-500">Zoom in (≥ {MARKER_MIN_ZOOM}) to see<br/>individual hotspot markers.</div>
         </>
       ) : (
         <div className="space-y-1.5">
           {cats.map(c => (
             <div key={c.label} className="flex items-center gap-2 text-xs">
               <span className="text-sm leading-none">{c.emoji}</span>
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color, boxShadow: `0 0 5px ${c.color}` }} />
+              <span className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: c.color, boxShadow: `0 0 5px ${c.color}` }} />
               <span>{c.label}</span>
             </div>
           ))}
@@ -144,46 +195,49 @@ function Legend({ mode }) {
   );
 }
 
-// ── Mode Toggle Button ────────────────────────────────────────────────────────
-function ModeToggle({ mode, setMode }) {
-  return (
-    <div className="absolute top-4 right-4 z-[1000] glass-panel rounded-xl p-1 shadow-2xl flex gap-1">
-      {[
-        { id: 'heatmap',   label: 'Heatmap',   icon: '🌡️' },
-        { id: 'satellite', label: 'Satellite',  icon: '🛰️' },
-      ].map(m => (
-        <button
-          key={m.id}
-          onClick={() => setMode(m.id)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-            mode === m.id
-              ? 'bg-blue-600/80 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]'
-              : 'text-slate-400 hover:text-white hover:bg-slate-700/60'
-          }`}
-        >
-          <span>{m.icon}</span>
-          <span>{m.label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
+// Removed ModeToggle as it is now in App.jsx
 
 // ── Main Map ──────────────────────────────────────────────────────────────────
-export default function Map({ hotspots = [], facilities = [], selectedHotspot, setSelectedHotspot }) {
-  const [mapMode, setMapMode] = useState('heatmap'); // default to heatmap for WOW opening
-  const defaultCenter = [22.5, 82.5]; // center of India
+export default function Map({ hotspots = [], facilities = [], selectedHotspot, setSelectedHotspot, mapMode = 'heatmap' }) {
+  const [currentZoom, setCurrentZoom] = useState(INDIA_ZOOM);
+
+  // Show markers: always in satellite mode; in heatmap mode only when zoomed in
+  const showMarkers = mapMode === 'satellite' || currentZoom >= MARKER_MIN_ZOOM;
 
   return (
     <div className="h-full w-full bg-slate-900 relative">
-      <MapContainer center={defaultCenter} zoom={5} className="h-full w-full z-0" zoomControl={false}>
+      <MapContainer
+        center={INDIA_CENTER}
+        zoom={INDIA_ZOOM}
+        bounds={INDIA_BOUNDS}
+        className="h-full w-full z-0"
+        zoomControl={false}
+      >
+        {/* ── Basemap ── */}
+        {mapMode === 'heatmap' ? (
+          <>
+            {/* No-label base: only geography, zero competing text */}
+            <TileLayer url={HEATMAP_TILES} attribution="&copy; CARTO" />
+            {/* Labels layer rendered above heat so city names stay legible */}
+            <TileLayer url={LABEL_TILES}   attribution="" pane="overlayPane" />
+          </>
+        ) : (
+          <TileLayer url={SATELLITE_TILES} attribution="Tiles &copy; Esri" />
+        )}
 
-        <BasemapLayer mode={mapMode} />
-        <HeatmapLayer hotspots={hotspots} />
+        {/* ── Heatmap visibility toggled smoothly via add/removeLayer ── */}
+        <HeatmapLayer hotspots={hotspots} isVisible={mapMode === 'heatmap'} />
 
-        {/* In satellite mode, show individual markers */}
+        {/* ── Zoom to India Button ── */}
+        <ZoomResetButton />
+
+        {/* ── Track zoom for marker visibility ── */}
+        <ZoomWatcher onZoomChange={setCurrentZoom} />
+
+        {/* ── Facilities — satellite mode only ── */}
         {mapMode === 'satellite' && facilities.map((fac, i) => (
-          <Marker key={`fac-${i}`}
+          <Marker
+            key={`fac-${i}`}
             position={[fac.geometry.coordinates[1], fac.geometry.coordinates[0]]}
             icon={facilityDivIcon}
           >
@@ -196,8 +250,8 @@ export default function Map({ hotspots = [], facilities = [], selectedHotspot, s
           </Marker>
         ))}
 
-        {/* Always show interactive hotspot markers */}
-        {hotspots.map((hotspot) => {
+        {/* ── Hotspot markers — zoom-gated in heatmap mode ── */}
+        {showMarkers && hotspots.map((hotspot) => {
           const { properties, geometry } = hotspot;
           const isSelected = selectedHotspot?.properties?.id === properties.id;
           const color = getHotspotColor(properties.classification);
@@ -227,7 +281,7 @@ export default function Map({ hotspots = [], facilities = [], selectedHotspot, s
                     <div className="flex justify-between">
                       <span>Risk Score:</span>
                       <span className={`font-semibold ${
-                        properties.severity === 'High' ? 'text-red-600' :
+                        properties.severity === 'High'   ? 'text-red-600'    :
                         properties.severity === 'Medium' ? 'text-orange-500' : 'text-green-600'
                       }`}>{properties.risk_score} ({properties.severity})</span>
                     </div>
@@ -259,6 +313,7 @@ export default function Map({ hotspots = [], facilities = [], selectedHotspot, s
           );
         })}
 
+        {/* ── Auto-pan to clicked hotspot ── */}
         {selectedHotspot && (
           <MapController
             center={[selectedHotspot.geometry.coordinates[1], selectedHotspot.geometry.coordinates[0]]}
@@ -267,7 +322,6 @@ export default function Map({ hotspots = [], facilities = [], selectedHotspot, s
         )}
       </MapContainer>
 
-      <ModeToggle mode={mapMode} setMode={setMapMode} />
       <Legend mode={mapMode} />
     </div>
   );
