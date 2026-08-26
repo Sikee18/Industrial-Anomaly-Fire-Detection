@@ -67,6 +67,22 @@ def init_db():
             records_added INTEGER,
             status TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS clusters (
+            cluster_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            center_lat REAL,
+            center_lon REAL,
+            first_seen TEXT,
+            last_seen TEXT,
+            num_unique_days INTEGER,
+            mean_brightness_temp REAL
+        );
+
+        CREATE TABLE IF NOT EXISTS hotspot_cluster_links (
+            hotspot_id INTEGER,
+            cluster_id INTEGER,
+            PRIMARY KEY (hotspot_id, cluster_id)
+        );
     """)
 
     conn.commit()

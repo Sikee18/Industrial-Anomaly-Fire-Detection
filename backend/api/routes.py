@@ -249,7 +249,7 @@ def _run_ingestion_pipeline(days: int = 3, demo_mode: bool = False):
     # Fetch historical hotspots from DB for recurrence analysis
     existing = get_hotspots(limit=5000)
     hist_df = pd.DataFrame(existing) if existing else None
-    tracked_df = track_persistence(classified_df, hist_df)
+    tracked_df, clusters_df, links_df = track_persistence(classified_df, hist_df)
 
     # 5. Risk scoring
     scored_df = compute_risk_scores(tracked_df)
