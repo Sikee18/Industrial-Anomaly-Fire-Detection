@@ -48,17 +48,38 @@ WGS84 = "EPSG:4326"
 INDIA_UTM = "EPSG:32644"  # UTM 44N covers most of India
 
 
+import os
+import joblib
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
 
 # ── ML Model Initialization ───────────────────────────────────────────────────
 _rf_model = None
 _le_target = None
 _le_lc = None
+_real_model = None
+_real_features = None
+
+USE_REAL_MODEL = os.getenv("USE_REAL_MODEL", "false").lower() == "true"
+REAL_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "fire_classifier_real.pkl")
+REAL_FEATURES_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "feature_cols.pkl")
 
 def _init_rf_model():
-    """Trains a RandomForestClassifier on synthetic boundary data for the demo MVP."""
-    global _rf_model, _le_target, _le_lc
+    """Initializes the ML model (either the real trained one or the synthetic MVP)."""
+    global _rf_model, _le_target, _le_lc, _real_model, _real_features
+
+    if USE_REAL_MODEL:
+        if os.path.exists(REAL_MODEL_PATH) and os.path.exists(REAL_FEATURES_PATH):
+            if _real_model is None:
+                _real_model = joblib.load(REAL_MODEL_PATH)
+                _real_features = joblib.load(REAL_FEATURES_PATH)
+                logger.info("[ML] Real RandomForestClassifier loaded.")
+            return
+        else:
+            logger.warning("[ML] USE_REAL_MODEL is true, but model files not found. Falling back to synthetic MVP model.")
+
     if _rf_model is not None:
         return
     
@@ -92,7 +113,56 @@ def _init_rf_model():
     
     _rf_model = RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42)
     _rf_model.fit(X, y)
-    logger.info("[ML] RandomForestClassifier initialized and trained.")
+    logger.info("[ML] Synthetic MVP RandomForestClassifier initialized.")
+
+
+def train_from_labeled_csv(csv_path: str):
+    """
+    Trains a real model from user-provided labeled data.
+    """
+    if not os.path.exists(csv_path):
+        print(f"Error: CSV {csv_path} not found.")
+        return
+
+    df = pd.read_csv(csv_path)
+    
+    # Required columns per specification
+    required = ["brightness_temp", "confidence", "satellite", "land_cover_class", "nearest_poi_distance", "persistence_days", "class_label"]
+    for col in required:
+        if col not in df.columns:
+            print(f"Error: Missing required column {col}")
+            return
+
+    # Drop NA target rows
+    df = df.dropna(subset=["class_label"])
+    
+    # One-hot encode categorical features
+    X = df[["brightness_temp", "confidence", "nearest_poi_distance", "persistence_days"]].copy()
+    
+    dummies = pd.get_dummies(df[["land_cover_class", "satellite"]], drop_first=True)
+    X = pd.concat([X, dummies], axis=1)
+    
+    # Fill any remaining NAs with median (basic imputation)
+    X = X.fillna(X.median())
+    y = df["class_label"]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+    
+    # max_depth=8 intentionally conservative due to expected small sample size (100-150 rows)
+    clf = RandomForestClassifier(n_estimators=200, max_depth=8, class_weight="balanced", random_state=42)
+    clf.fit(X_train, y_train)
+    
+    y_pred = clf.predict(X_test)
+    print("--- Classification Report ---")
+    print(classification_report(y_test, y_pred))
+    print("--- Confusion Matrix ---")
+    print(confusion_matrix(y_test, y_pred))
+
+    # Save model and feature columns for deterministic inference later
+    os.makedirs(os.path.dirname(REAL_MODEL_PATH), exist_ok=True)
+    joblib.dump(clf, REAL_MODEL_PATH)
+    joblib.dump(list(X.columns), REAL_FEATURES_PATH)
+    print(f"Saved real model to {REAL_MODEL_PATH}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -183,19 +253,50 @@ def _classify_single(
     land_cover = get_land_cover(lat, lon)
 
     # ── Step 4: ML Classification via RandomForest ─────────────────────────────
-    # Encode land cover for the model
-    try:
-        lc_code = _le_lc.transform([land_cover])[0]
-    except ValueError:
-        lc_code = _le_lc.transform(["Unknown"])[0]
+    
+    if USE_REAL_MODEL and _real_model is not None and _real_features is not None:
+        # Use real model
+        row_dict = {
+            "brightness_temp": brightness,
+            "confidence": float(row.get("confidence", 50) or 50),  # fallback
+            "nearest_poi_distance": dist_km,
+            "persistence_days": int(is_recurring) * 3  # rough proxy since we don't have the exact num_unique_days here
+        }
+        
+        # We need to construct the feature vector exactly matching _real_features
+        features_dict = {}
+        for col in _real_features:
+            if col in row_dict:
+                features_dict[col] = row_dict[col]
+            elif col.startswith("land_cover_class_"):
+                lc_val = col.replace("land_cover_class_", "")
+                features_dict[col] = 1 if land_cover == lc_val else 0
+            elif col.startswith("satellite_"):
+                sat_val = col.replace("satellite_", "")
+                features_dict[col] = 1 if str(row.get("satellite", "")) == sat_val else 0
+            else:
+                features_dict[col] = 0
+                
+        features_df = pd.DataFrame([features_dict], columns=_real_features)
+        prediction = _real_model.predict(features_df)[0]
+        probabilities = _real_model.predict_proba(features_df)[0]
+        classification = prediction
+        confidence_score = round(float(max(probabilities)) * 100, 1)
+        
+    else:
+        # Use synthetic MVP model
+        try:
+            lc_code = _le_lc.transform([land_cover])[0]
+        except ValueError:
+            lc_code = _le_lc.transform(["Unknown"])[0]
 
-    features = pd.DataFrame([[dist_km, frp, brightness, int(is_recurring), lc_code]],
-                             columns=["dist_km", "frp", "brightness", "is_recurring", "lc_code"])
-    prediction = _rf_model.predict(features)[0]
-    probabilities = _rf_model.predict_proba(features)[0]
+        features = pd.DataFrame([[dist_km, frp, brightness, int(is_recurring), lc_code]],
+                                 columns=["dist_km", "frp", "brightness", "is_recurring", "lc_code"])
+        prediction = _rf_model.predict(features)[0]
+        probabilities = _rf_model.predict_proba(features)[0]
 
-    classification = _le_target.inverse_transform([prediction])[0]
-    confidence_score = round(float(max(probabilities)) * 100, 1)
+        classification = _le_target.inverse_transform([prediction])[0]
+        confidence_score = round(float(max(probabilities)) * 100, 1)
 
     # Boost confidence for strong signals
     if dist_km < INDUSTRIAL_DIST_KM and frp >= HIGH_FRP_THRESHOLD:
