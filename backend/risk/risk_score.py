@@ -70,8 +70,10 @@ def compute_risk_scores(hotspots_df: pd.DataFrame) -> pd.DataFrame:
     is_persistent = pd.to_numeric(df.get("is_persistent", 0), errors="coerce").fillna(0)
     persistence_score = is_persistent * 100 * 0.20
 
-    # ── Wind Speed Score (10%) — stubbed ────────────────────────────────────
-    wind_score = np.full(len(df), 50 * 0.10)
+    # ── Wind Speed Score (10%) ────────────────────────────────────────────────
+    wind_speeds = df.apply(lambda row: _get_wind_speed(row["latitude"], row["longitude"], row["acq_date"]), axis=1)
+    # Normalize: wind_score = min(wind_speed / 10.0, 1.0) * 100 * 0.10
+    wind_score = np.clip(wind_speeds / 10.0, 0, 1.0) * 100 * 0.10
 
     # ── Classification Multiplier ────────────────────────────────────────────
     class_multiplier = df.get("classification", "Unclassified Thermal Anomaly").map({
@@ -102,10 +104,46 @@ def compute_risk_scores(hotspots_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _stub_wind_speed(lat: float, lon: float) -> float:
+import requests
+import datetime
+from datetime import date
+
+# In-memory cache to avoid duplicate API calls for nearby hotspots on the same day
+_WIND_CACHE = {}
+
+def _get_wind_speed(lat: float, lon: float, acq_date: str) -> float:
     """
-    Placeholder wind speed (m/s). Returns a default moderate value.
-    Production: call OpenWeatherMap Current Weather API:
-      GET https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={key}
+    Fetch historical wind speed from Open-Meteo.
+    Returns 5.0 (moderate wind, yielding a 0.5 normalized score) on failure or for old records.
     """
-    return 5.0  # m/s — moderate wind, stub
+    try:
+        dt = datetime.datetime.strptime(str(acq_date), "%Y-%m-%d").date()
+        if (date.today() - dt).days > 7:
+            return 5.0
+    except Exception:
+        return 5.0
+
+    cache_key = (round(lat, 2), round(lon, 2), acq_date)
+    if cache_key in _WIND_CACHE:
+        return _WIND_CACHE[cache_key]
+
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=windspeed_10m_max&timezone=auto&past_days=7"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        times = data.get("daily", {}).get("time", [])
+        winds = data.get("daily", {}).get("windspeed_10m_max", [])
+        
+        if acq_date in times:
+            idx = times.index(acq_date)
+            ws = winds[idx]
+            if ws is not None:
+                _WIND_CACHE[cache_key] = ws
+                return ws
+    except Exception as e:
+        logger.warning(f"[Weather] Failed to fetch wind data for {lat},{lon}: {e}")
+        
+    _WIND_CACHE[cache_key] = 5.0
+    return 5.0
