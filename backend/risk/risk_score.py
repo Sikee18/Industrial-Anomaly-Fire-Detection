@@ -27,15 +27,15 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Severity bands
-SEVERITY_HIGH = 71
-SEVERITY_MEDIUM = 41
+# Severity bands — recalibrated for real-world FIRMS data
+SEVERITY_HIGH   = 55
+SEVERITY_MEDIUM = 28
 
-# FRP normalization cap (MW) — above this = max FRP score
-FRP_CAP = 500.0
+# FRP normalization cap (MW) — real VIIRS values rarely exceed 150 MW
+FRP_CAP = 100.0
 
-# Distance normalization (km) — beyond this = min proximity score
-DIST_CAP_KM = 20.0
+# Distance normalization — within 5 km of a facility = full proximity score
+DIST_CAP_KM = 5.0
 
 
 def compute_risk_scores(hotspots_df: pd.DataFrame) -> pd.DataFrame:
@@ -53,23 +53,24 @@ def compute_risk_scores(hotspots_df: pd.DataFrame) -> pd.DataFrame:
 
     df = hotspots_df.copy()
 
-    # ── FRP Score (40%) ──────────────────────────────────────────────────────
+    # ── FRP Score (35%) ──────────────────────────────────────────────────────
     frp = pd.to_numeric(df.get("frp", 0), errors="coerce").fillna(0)
-    frp_score = np.clip(frp / FRP_CAP, 0, 1) * 100 * 0.40
+    frp_score = np.clip(frp / FRP_CAP, 0, 1) * 100 * 0.35
 
-    # ── Proximity Score (30%) ────────────────────────────────────────────────
+    # ── Brightness baseline (10%) — ensures non-zero score for all events ────
+    brightness = pd.to_numeric(df.get("brightness", 300), errors="coerce").fillna(300)
+    # Normalize: 300K=0, 420K=100
+    brightness_score = np.clip((brightness - 300) / 120, 0, 1) * 100 * 0.10
+
+    # ── Proximity Score (25%) ────────────────────────────────────────────────
     dist = pd.to_numeric(df.get("nearest_facility_dist_km", DIST_CAP_KM), errors="coerce").fillna(DIST_CAP_KM)
-    # Closer = higher risk: invert so 0 km → 100, 20+ km → 0
-    proximity_score = np.clip(1 - dist / DIST_CAP_KM, 0, 1) * 100 * 0.30
+    proximity_score = np.clip(1 - dist / DIST_CAP_KM, 0, 1) * 100 * 0.25
 
     # ── Persistence Score (20%) ──────────────────────────────────────────────
     is_persistent = pd.to_numeric(df.get("is_persistent", 0), errors="coerce").fillna(0)
-    # Binary for MVP: persistent sources get full persistence score
     persistence_score = is_persistent * 100 * 0.20
 
     # ── Wind Speed Score (10%) — stubbed ────────────────────────────────────
-    # TODO: Integrate OpenWeatherMap API. Stub: use 50% wind impact.
-    # In production: high wind speed near industrial fire → higher score.
     wind_score = np.full(len(df), 50 * 0.10)
 
     # ── Classification Multiplier ────────────────────────────────────────────
@@ -83,7 +84,7 @@ def compute_risk_scores(hotspots_df: pd.DataFrame) -> pd.DataFrame:
     }).fillna(0.40)
 
     # ── Final Score ──────────────────────────────────────────────────────────
-    raw_score = frp_score + proximity_score + persistence_score + wind_score
+    raw_score = frp_score + brightness_score + proximity_score + persistence_score + wind_score
     risk_score = np.clip(raw_score * class_multiplier, 0, 100).round(1)
 
     df["risk_score"] = risk_score

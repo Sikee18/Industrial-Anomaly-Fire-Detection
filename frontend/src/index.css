@@ -7,64 +7,95 @@
 }
 
 /* Custom scrollbar for dark theme */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  @apply bg-slate-800;
-}
-
-::-webkit-scrollbar-thumb {
-  @apply bg-slate-600 rounded;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-slate-500;
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { @apply bg-slate-800; }
+::-webkit-scrollbar-thumb { @apply bg-slate-600 rounded; }
+::-webkit-scrollbar-thumb:hover { @apply bg-slate-500; }
 
 /* Map specific styles */
 .leaflet-container {
-  background: #0f172a !important; /* slate-900 to match theme */
+  background: #0f172a !important;
 }
 
-/* Custom pulse animation for persistent sources */
-@keyframes customPulse {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-  70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+/* ── Glow pulse — opacity + box-shadow only, NO transform ──────────────────── */
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 6px 2px var(--glow-color); opacity: 1; }
+  50%       { box-shadow: 0 0 18px 8px var(--glow-color); opacity: 0.75; }
+}
+
+@keyframes glowRing {
+  0%   { box-shadow: 0 0 0 0 var(--glow-color); opacity: 0.9; }
+  70%  { box-shadow: 0 0 0 10px transparent; opacity: 0; }
+  100% { box-shadow: 0 0 0 0 transparent; opacity: 0; }
+}
+
+/* Base custom marker */
+.fire-marker {
+  --glow-color: rgba(239,68,68,0.7);
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  animation: glowPulse 2.8s ease-in-out infinite;
+  transition: transform 0.15s ease;
+}
+
+.fire-marker:hover { transform: scale(1.25); }
+
+/* Ring for persistent sources */
+.fire-marker.persistent::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  animation: glowRing 1.8s ease-out infinite;
+  --glow-color: rgba(239,68,68,0.8);
+}
+
+/* ── Per-category colours ──────────────────────────────────────────────────── */
+.marker-industrial { background: radial-gradient(circle, #ff6b6b, #c0392b); --glow-color: rgba(220,38,38,0.8); }
+.marker-gasflare   { background: radial-gradient(circle, #ffa94d, #e67e22); --glow-color: rgba(249,115,22,0.8); }
+.marker-mining     { background: radial-gradient(circle, #ffe066, #d4ac0d); --glow-color: rgba(234,179,8,0.8);  }
+.marker-agri       { background: radial-gradient(circle, #69db7c, #27ae60); --glow-color: rgba(34,197,94,0.8);  }
+.marker-wildfire   { background: radial-gradient(circle, #ff8787, #922b21); --glow-color: rgba(185,28,28,0.8);  }
+.marker-unknown    { background: radial-gradient(circle, #adb5bd, #6c757d); --glow-color: rgba(148,163,184,0.5);}
+
+/* Facility icon */
+.facility-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  border: 1.5px solid rgba(147,197,253,0.8);
+  box-shadow: 0 0 8px 2px rgba(59,130,246,0.5);
+}
+
+/* Selected marker ring */
+.fire-marker.selected {
+  border: 2.5px solid #fff;
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.4), 0 0 20px 6px var(--glow-color);
 }
 
 @keyframes slideInRight {
   from { opacity: 0; transform: translateX(20px); }
-  to { opacity: 1; transform: translateX(0); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 
 @keyframes iconPulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
 }
 
-.pulse-marker {
-  animation: customPulse 2s infinite;
-  border-radius: 50%;
-  background-color: #ef4444; /* red-500 */
-}
+.animate-slide-in   { animation: slideInRight 0.3s ease-out forwards; }
+.animate-icon-pulse { animation: iconPulse 2s infinite ease-in-out; }
 
-.animate-slide-in {
-  animation: slideInRight 0.3s ease-out forwards;
-}
-
-.animate-icon-pulse {
-  animation: iconPulse 2s infinite ease-in-out;
-}
-
-/* Glassmorphism utilities */
+/* Glassmorphism */
 .glass-panel {
   background: rgba(15, 23, 42, 0.7);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
-

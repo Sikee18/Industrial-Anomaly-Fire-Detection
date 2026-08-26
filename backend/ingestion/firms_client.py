@@ -21,13 +21,12 @@ logger = logging.getLogger(__name__)
 
 FIRMS_BASE_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 
-# Default bounding box: India's industrial belt
-# (Gujarat + Odisha + Jharkhand + Chhattisgarh)
+# Full India bounding box (WGS84)
 DEFAULT_BBOX = {
     "west": 68.0,
-    "south": 18.0,
-    "east": 88.0,
-    "north": 25.5,
+    "south": 8.0,
+    "east": 97.5,
+    "north": 37.0,
 }
 
 # FIRMS sources available
