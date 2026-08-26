@@ -9,16 +9,27 @@ export function useHotspots(source = 'live') {
 
   const fetchHotspots = async () => {
     setLoading(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000); // 10s timeout
     try {
-      const response = await fetch(`${API_URL}/hotspots?source=${source}&limit=2000`);
+      const response = await fetch(
+        `${API_URL}/hotspots?source=${source}&limit=2000`,
+        { signal: controller.signal }
+      );
       if (!response.ok) throw new Error('Failed to fetch hotspots');
       const result = await response.json();
       setData(result);
       setError(null);
     } catch (err) {
-      console.error(err);
-      setError(err.message);
+      if (err.name === 'AbortError') {
+        console.warn('Hotspot fetch timed out — backend may be busy ingesting.');
+        setError('Backend busy. Retrying in 15s...');
+      } else {
+        console.error(err);
+        setError(err.message);
+      }
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   };

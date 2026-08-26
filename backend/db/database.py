@@ -13,8 +13,11 @@ DB_PATH = Path(__file__).parent.parent / "fire_monitor.db"
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=30)
     conn.row_factory = sqlite3.Row
+    # WAL mode: allows reads and writes to happen concurrently
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 
@@ -45,6 +48,7 @@ def init_db():
             is_persistent INTEGER DEFAULT 0,
             source TEXT DEFAULT 'live',
             land_cover TEXT,
+            wind_speed REAL,
             created_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -113,13 +117,13 @@ def insert_hotspots(records: list[dict]):
             acq_date, acq_time, satellite, instrument,
             classification, confidence_score, risk_score, severity,
             nearest_facility_id, nearest_facility_name, nearest_facility_dist_km,
-            is_persistent, source, land_cover
+            is_persistent, source, land_cover, wind_speed
         ) VALUES (
             :latitude, :longitude, :brightness, :frp, :confidence,
             :acq_date, :acq_time, :satellite, :instrument,
             :classification, :confidence_score, :risk_score, :severity,
             :nearest_facility_id, :nearest_facility_name, :nearest_facility_dist_km,
-            :is_persistent, :source, :land_cover
+            :is_persistent, :source, :land_cover, :wind_speed
         )
     """, records)
     conn.commit()

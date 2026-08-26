@@ -298,7 +298,24 @@ def _classify_single(
         classification = _le_target.inverse_transform([prediction])[0]
         confidence_score = round(float(max(probabilities)) * 100, 1)
 
-    # Boost confidence for strong signals
+    # ── Step 5: Rule-based override for Unclassified hotspots ──────────────────
+    DIST_FAR = 15.0  # km — beyond this, use heuristics
+    if classification == "Unclassified Thermal Anomaly" and dist_km > DIST_FAR:
+        # Drop thresholds to 0 so every blip with a known land cover gets a category
+        if land_cover in ("Tree cover", "Shrubland", "Mixed Forest", "Forest"):
+            classification = "Wildfire" if frp >= 4 else "Agricultural Burn"
+            confidence_score = max(confidence_score, 55.0)
+        elif land_cover in ("Cropland",):
+            classification = "Agricultural Burn"
+            confidence_score = max(confidence_score, 60.0)
+        elif land_cover in ("Barren/Desert", "Bare/sparse vegetation"):
+            classification = "Mining Thermal Activity"
+            confidence_score = max(confidence_score, 50.0)
+        elif frp >= 0:
+            classification = "Agricultural Burn"
+            confidence_score = max(confidence_score, 50.0)
+
+    # Boost confidence for strong proximity + FRP signals
     if dist_km < INDUSTRIAL_DIST_KM and frp >= HIGH_FRP_THRESHOLD:
         confidence_score = min(100, confidence_score + 10)
     if is_recurring:

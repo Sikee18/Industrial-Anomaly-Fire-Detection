@@ -70,7 +70,7 @@ function HeatmapLayer({ hotspots, isVisible }) {
     });
 
     if (!heatRef.current) {
-      // First initialization
+      // First initialization — do NOT add to map yet, let visibility logic below handle that
       heatRef.current = L.heatLayer(points, {
         radius:     18,
         blur:       12,
@@ -83,8 +83,27 @@ function HeatmapLayer({ hotspots, isVisible }) {
         },
       });
     } else {
-      // Avoid recreating the layer on zoom, just update the data points
-      heatRef.current.setLatLngs(points);
+      // CRITICAL: only call setLatLngs when the layer is attached to the map.
+      // Calling it while detached triggers redraw() -> this._map._animating -> crash.
+      if (map.hasLayer(heatRef.current)) {
+        try {
+          heatRef.current.setLatLngs(points);
+        } catch (e) {
+          console.warn('[HeatmapLayer] setLatLngs failed, recreating layer:', e);
+          map.removeLayer(heatRef.current);
+          heatRef.current = null;
+          heatRef.current = L.heatLayer(points, {
+            radius: 18, blur: 12, maxZoom: 12, max: 1.0, minOpacity: 0.25,
+            gradient: { 0.00: '#0d0221', 0.15: '#3d0b71', 0.32: '#8b1a8f', 0.52: '#d64045', 0.70: '#f7821b', 0.87: '#fbbf24', 1.00: '#fefce8' },
+          });
+        }
+      } else {
+        // Layer not on map — recreate with fresh points so when it's added it's current
+        heatRef.current = L.heatLayer(points, {
+          radius: 18, blur: 12, maxZoom: 12, max: 1.0, minOpacity: 0.25,
+          gradient: { 0.00: '#0d0221', 0.15: '#3d0b71', 0.32: '#8b1a8f', 0.52: '#d64045', 0.70: '#f7821b', 0.87: '#fbbf24', 1.00: '#fefce8' },
+        });
+      }
     }
 
     // Handle visibility by adding/removing from map directly
@@ -103,7 +122,7 @@ function HeatmapLayer({ hotspots, isVisible }) {
   useEffect(() => {
     return () => {
       if (heatRef.current && map) {
-        map.removeLayer(heatRef.current);
+        try { map.removeLayer(heatRef.current); } catch (_) {}
       }
     };
   }, [map]);
@@ -289,6 +308,18 @@ export default function Map({ hotspots = [], facilities = [], selectedHotspot, s
                       <span>Detected:</span>
                       <span className="font-semibold text-slate-800">{properties.acq_date} {properties.acq_time}</span>
                     </div>
+                    {properties.land_cover && properties.land_cover !== "Unknown" && (
+                      <div className="flex justify-between">
+                        <span>Land Cover:</span>
+                        <span className="font-semibold text-slate-800">{properties.land_cover}</span>
+                      </div>
+                    )}
+                    {properties.wind_speed !== undefined && (
+                      <div className="flex justify-between">
+                        <span>Wind Speed:</span>
+                        <span className="font-semibold text-slate-800">{properties.wind_speed} m/s</span>
+                      </div>
+                    )}
                     {properties.nearest_facility_name && properties.nearest_facility_name !== 'N/A' && (
                       <div className="mt-2 pt-2 border-t border-slate-200">
                         <div className="text-slate-500 mb-1">Nearest Facility:</div>

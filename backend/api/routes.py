@@ -81,6 +81,7 @@ def get_hotspots_geojson(
                 "is_persistent": bool(r["is_persistent"]),
                 "source": r["source"],
                 "land_cover": r["land_cover"],
+                "wind_speed": r["wind_speed"],
             },
         })
 
@@ -183,17 +184,41 @@ def get_summary_stats():
 
 # ── Ingest ────────────────────────────────────────────────────────────────────
 
+import threading
+_ingest_lock = threading.Lock()
+_ingest_running = False
+
+def _run_ingest_thread(days: int, demo_mode: bool):
+    global _ingest_running
+    with _ingest_lock:
+        if _ingest_running:
+            print("[Ingest] Already running, skipping duplicate request.")
+            return
+        _ingest_running = True
+    try:
+        _run_ingestion_pipeline(days=days, demo_mode=demo_mode)
+    finally:
+        _ingest_running = False
+
 @router.post("/ingest")
-def trigger_ingest(background_tasks: BackgroundTasks, days: int = Query(3, ge=1, le=10)):
-    """Trigger a fresh FIRMS + OSM data ingestion pipeline in the background."""
-    background_tasks.add_task(_run_ingestion_pipeline, days=days, demo_mode=False)
+def trigger_ingest(days: int = Query(3, ge=1, le=10)):
+    """Trigger a fresh FIRMS + OSM data ingestion pipeline in a background thread."""
+    global _ingest_running
+    if _ingest_running:
+        return {"status": "already_running", "message": "Ingest already in progress"}
+    t = threading.Thread(target=_run_ingest_thread, args=(days, False), daemon=True)
+    t.start()
     return {"status": "ingestion_started", "days": days, "mode": "live"}
 
 
 @router.post("/ingest/demo")
-def trigger_demo_ingest(background_tasks: BackgroundTasks):
-    """Load demo seed data into the database."""
-    background_tasks.add_task(_run_ingestion_pipeline, days=3, demo_mode=True)
+def trigger_demo_ingest():
+    """Load demo seed data into the database in a background thread."""
+    global _ingest_running
+    if _ingest_running:
+        return {"status": "already_running", "message": "Ingest already in progress"}
+    t = threading.Thread(target=_run_ingest_thread, args=(3, True), daemon=True)
+    t.start()
     return {"status": "demo_ingestion_started"}
 
 
@@ -205,10 +230,11 @@ def _run_ingestion_pipeline(days: int = 3, demo_mode: bool = False):
     from ingestion.seed_demo_data import load_demo_hotspots
     from classification.classify import classify_hotspots
     from risk.persistence_tracker import track_persistence
-    from risk.risk_score import compute_risk_scores
+    from risk.risk_score import compute_risk_scores, _reset_wind_circuit_breaker
 
     print(f"\n{'='*50}")
     print(f"[Pipeline] Starting {'DEMO' if demo_mode else 'LIVE'} ingestion...")
+    _reset_wind_circuit_breaker()  # Allow fresh attempt each manual ingest
 
     # 1. Fetch facilities (always needed for classification)
     facilities_df = fetch_osm_facilities()
@@ -260,7 +286,7 @@ def _run_ingestion_pipeline(days: int = 3, demo_mode: bool = False):
         "acq_date", "acq_time", "satellite", "instrument",
         "classification", "confidence_score", "risk_score", "severity",
         "nearest_facility_id", "nearest_facility_name", "nearest_facility_dist_km",
-        "is_persistent", "source", "land_cover",
+        "is_persistent", "source", "land_cover", "wind_speed",
     ]
     for col in required_cols:
         if col not in scored_df.columns:
@@ -268,6 +294,7 @@ def _run_ingestion_pipeline(days: int = 3, demo_mode: bool = False):
 
     scored_df["nearest_facility_id"] = scored_df.get("nearest_facility_id", pd.Series([None]*len(scored_df)))
     scored_df["land_cover"] = scored_df.get("land_cover", "Unknown")
+    scored_df["wind_speed"] = scored_df.get("wind_speed", pd.Series([5.0]*len(scored_df)))
 
     records = scored_df[required_cols].to_dict("records")
     inserted = insert_hotspots(records)

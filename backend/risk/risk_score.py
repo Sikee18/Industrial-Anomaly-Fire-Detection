@@ -71,7 +71,19 @@ def compute_risk_scores(hotspots_df: pd.DataFrame) -> pd.DataFrame:
     persistence_score = is_persistent * 100 * 0.20
 
     # ── Wind Speed Score (10%) ────────────────────────────────────────────────
-    wind_speeds = df.apply(lambda row: _get_wind_speed(row["latitude"], row["longitude"], row["acq_date"]), axis=1)
+    # Batch by unique (rounded lat, rounded lon, date) to avoid one API call per hotspot.
+    df["_lat_r"] = df["latitude"].round(1)
+    df["_lon_r"] = df["longitude"].round(1)
+    df["_date"]  = df["acq_date"].astype(str)
+
+    unique_keys = df[["_lat_r", "_lon_r", "_date"]].drop_duplicates()
+    wind_map = {}
+    for _, uk in unique_keys.iterrows():
+        wind_map[(uk["_lat_r"], uk["_lon_r"], uk["_date"])] = _get_wind_speed(uk["_lat_r"], uk["_lon_r"], uk["_date"])
+
+    wind_speeds = df.apply(lambda r: wind_map.get((r["_lat_r"], r["_lon_r"], r["_date"]), 5.0), axis=1)
+    df.drop(columns=["_lat_r", "_lon_r", "_date"], inplace=True)
+
     # Normalize: wind_score = min(wind_speed / 10.0, 1.0) * 100 * 0.10
     wind_score = np.clip(wind_speeds / 10.0, 0, 1.0) * 100 * 0.10
 
@@ -90,6 +102,7 @@ def compute_risk_scores(hotspots_df: pd.DataFrame) -> pd.DataFrame:
     risk_score = np.clip(raw_score * class_multiplier, 0, 100).round(1)
 
     df["risk_score"] = risk_score
+    df["wind_speed"] = wind_speeds.round(1)
     df["severity"] = pd.cut(
         risk_score,
         bins=[-1, SEVERITY_MEDIUM - 1, SEVERITY_HIGH - 1, 100],
@@ -111,11 +124,23 @@ from datetime import date
 # In-memory cache to avoid duplicate API calls for nearby hotspots on the same day
 _WIND_CACHE = {}
 
+# Circuit breaker to prevent hanging on multiple timeouts
+_WEATHER_API_DEAD = False
+
+def _reset_wind_circuit_breaker():
+    """Allow fresh weather API attempts at the start of each ingestion run."""
+    global _WEATHER_API_DEAD
+    _WEATHER_API_DEAD = False
+
 def _get_wind_speed(lat: float, lon: float, acq_date: str) -> float:
     """
     Fetch historical wind speed from Open-Meteo.
     Returns 5.0 (moderate wind, yielding a 0.5 normalized score) on failure or for old records.
     """
+    global _WEATHER_API_DEAD
+    if _WEATHER_API_DEAD:
+        return 5.0
+
     try:
         dt = datetime.datetime.strptime(str(acq_date), "%Y-%m-%d").date()
         if (date.today() - dt).days > 7:
@@ -129,7 +154,7 @@ def _get_wind_speed(lat: float, lon: float, acq_date: str) -> float:
 
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=windspeed_10m_max&timezone=auto&past_days=7"
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=2) # Very aggressive timeout for startup
         resp.raise_for_status()
         data = resp.json()
         
@@ -143,7 +168,8 @@ def _get_wind_speed(lat: float, lon: float, acq_date: str) -> float:
                 _WIND_CACHE[cache_key] = ws
                 return ws
     except Exception as e:
-        logger.warning(f"[Weather] Failed to fetch wind data for {lat},{lon}: {e}")
+        logger.warning(f"[Weather] Failed to fetch wind data for {lat},{lon}: {e}. Disabling weather API for this run.")
+        _WEATHER_API_DEAD = True
         
     _WIND_CACHE[cache_key] = 5.0
     return 5.0
