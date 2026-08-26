@@ -30,6 +30,8 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
 
+from .land_cover import get_land_cover
+
 logger = logging.getLogger(__name__)
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
@@ -177,10 +179,8 @@ def _classify_single(
         recurrence_count = unique_dates
         is_recurring = unique_dates >= 3
 
-    # ── Step 3: Land cover inference (proxy from coordinates) ─────────────────
-    # MVP: coarse land-cover from lat/lon heuristics.
-    # Production: query ESA WorldCover or MODIS land-cover raster.
-    land_cover = _infer_land_cover(lat, lon)
+    # ── Step 3: Land cover inference (ESA WorldCover GeoTIFF) ─────────────────
+    land_cover = get_land_cover(lat, lon)
 
     # ── Step 4: ML Classification via RandomForest ─────────────────────────────
     # Encode land cover for the model
@@ -213,45 +213,3 @@ def _classify_single(
         "is_persistent": 1 if is_recurring else 0,
     }
 
-
-def _infer_land_cover(lat: float, lon: float) -> str:
-    """
-    Coarse land-cover inference from coordinates.
-    MVP proxy — replaces with ESA WorldCover in production.
-
-    Major Indian land-cover zones approximated:
-    - Indo-Gangetic Plain (cropland belt)
-    - Deccan Plateau (mixed cropland/scrub)
-    - Western Ghats / Northeastern India (forest)
-    - Thar Desert
-    - Coastal / mangrove zones
-    """
-    # Thar Desert (Gujarat/Rajasthan)
-    if lon < 73.0 and lat > 24.0:
-        return "Barren/Desert"
-
-    # Western Ghats (dense forest)
-    if 73.0 < lon < 77.5 and 8.0 < lat < 21.0:
-        return "Forest"
-
-    # Northeastern India (heavy forest)
-    if lon > 89.0 and lat > 22.0:
-        return "Forest"
-
-    # Indo-Gangetic Plain (prime cropland belt)
-    if lat > 23.0 and 75.0 < lon < 88.0:
-        return "Cropland"
-
-    # Central India (Madhya Pradesh, Chhattisgarh — mixed)
-    if 19.0 < lat < 24.0 and 78.0 < lon < 84.0:
-        return "Shrubland"
-
-    # Odisha / Jharkhand / West Bengal — mixed forest/industrial
-    if 20.0 < lat < 24.0 and 84.0 < lon < 88.0:
-        return "Mixed Forest"
-
-    # Deccan Plateau — cropland/scrub
-    if 14.0 < lat < 20.0:
-        return "Cropland"
-
-    return "Unknown"
