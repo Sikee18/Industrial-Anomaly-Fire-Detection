@@ -4,18 +4,18 @@ import { useFacilities } from './hooks/useFacilities';
 import Map from './components/Map';
 import Sidebar from './components/Sidebar';
 import StatsBar from './components/StatsBar';
-import { Activity } from 'lucide-react';
+import ReportsPanel from './components/ReportsPanel';
+import PyroChat from './components/PyroChat';
+import { Activity, BarChart2 } from 'lucide-react';
 
 function App() {
   const [source, setSource] = useState('live'); // 'live' or 'demo'
   const [selectedHotspot, setSelectedHotspot] = useState(null);
   const [mapMode, setMapMode] = useState('heatmap'); // 'heatmap' or 'satellite'
+  const [showReports, setShowReports] = useState(false);
   
   const { data: hotspotsData, loading: hotspotsLoading, error: hotspotsError, refetch } = useHotspots(source);
   const { data: facilitiesData } = useFacilities();
-
-  // Basic stats
-  const totalHotspots = hotspotsData?.count || 0;
 
   // Handle mode switch — preserve map state, don't clear selection automatically
   const handleModeSwitch = (mode) => {
@@ -37,11 +37,25 @@ function App() {
           </h1>
         </div>
 
-        <StatsBar source={source} setSource={setSource} onRefresh={refetch} />
+        <div className="flex items-center gap-3">
+          <StatsBar source={source} setSource={setSource} onRefresh={refetch} />
+          <button
+            onClick={() => setShowReports(v => !v)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all duration-200 ${
+              showReports
+                ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.4)]'
+                : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white hover:border-slate-500'
+            }`}
+            title="Insights & Reports"
+          >
+            <BarChart2 className="w-4 h-4" />
+            <span className="hidden md:inline">Reports</span>
+          </button>
+        </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex overflow-hidden relative">
         
         {/* Map Area */}
         <section className="flex-1 relative z-0 flex flex-col">
@@ -77,6 +91,15 @@ function App() {
             setSelectedHotspot={setSelectedHotspot}
             mapMode={mapMode}
           />
+
+          {/* Reports Panel — Overlay on map section */}
+          {showReports && (
+            <ReportsPanel
+              hotspots={hotspotsData?.features || []}
+              source={source}
+              onClose={() => setShowReports(false)}
+            />
+          )}
         </section>
 
         {/* Sidebar */}
@@ -91,6 +114,9 @@ function App() {
         </aside>
 
       </main>
+
+      {/* Pyro Floating Chatbot — global, outside main flow */}
+      <PyroChat source={source} />
     </div>
   );
 }

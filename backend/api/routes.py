@@ -14,7 +14,7 @@ import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Body
 from fastapi.responses import JSONResponse
 
 from db.database import (
@@ -312,3 +312,33 @@ def _run_ingestion_pipeline(days: int = 3, demo_mode: bool = False):
     inserted = insert_hotspots(records)
     print(f"[Pipeline] Stored {inserted} hotspot records.")
     print(f"{'='*50}\n")
+
+# ── Reports & Chat ──────────────────────────────────────────────────────────────
+
+@router.get("/reports/download")
+def download_report(source: str = Query("live")):
+    """Generate and return a PDF report for the given dataset."""
+    from reports.pdf_generator import generate_report_pdf
+    from fastapi.responses import StreamingResponse
+    
+    pdf_buffer = generate_report_pdf(source)
+    headers = {
+        "Content-Disposition": f"attachment; filename=industrial_fire_report_{source}.pdf"
+    }
+    return StreamingResponse(pdf_buffer, media_type="application/pdf", headers=headers)
+
+@router.post("/chat")
+def chat_with_pyro(request: dict = Body(...)):
+    """Handle chat requests for the Pyro AI assistant."""
+    from ai.pyro_assistant import generate_pyro_response, ChatRequest
+    
+    # Parse manual dict to handle missing keys gracefully if needed
+    chat_req = ChatRequest(**request)
+    
+    # Fetch context data
+    stats = get_stats(source=chat_req.source)
+    hotspots = get_hotspots(source=chat_req.source, limit=5000)
+    top_events = sorted(hotspots, key=lambda x: x["risk_score"], reverse=True)[:5]
+    
+    reply = generate_pyro_response(chat_req, stats, top_events)
+    return {"reply": reply}
