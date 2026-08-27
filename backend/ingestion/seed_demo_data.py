@@ -26,30 +26,34 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-DEMO_CSV_PATH = Path(__file__).parent.parent / "data" / "demo_hotspots.csv"
+DEMO_JSON_PATH = Path(__file__).parent.parent / "data" / "demo_data.json"
 
-
-def load_demo_hotspots() -> pd.DataFrame:
+def load_demo_hotspots() -> list[dict]:
     """
-    Load static demo hotspot CSV.
-
+    Load static pre-classified demo hotspot JSON.
     Returns:
-        pandas DataFrame with FIRMS-compatible columns.
+        List of dictionaries representing fully processed hotspot rows.
     """
-    if not DEMO_CSV_PATH.exists():
-        logger.error(f"[Seed] Demo CSV not found at {DEMO_CSV_PATH}")
-        return pd.DataFrame()
+    import json
+    if not DEMO_JSON_PATH.exists():
+        logger.error(f"[Seed] Demo JSON not found at {DEMO_JSON_PATH}")
+        return []
 
-    df = pd.read_csv(DEMO_CSV_PATH)
-    df["source"] = "demo"
+    with open(DEMO_JSON_PATH, "r") as f:
+        records = json.load(f)
 
-    # Ensure required columns
-    df["acq_time"] = df["acq_time"].astype(str).str.zfill(4)
-    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
-    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
-    df["frp"] = pd.to_numeric(df["frp"], errors="coerce").fillna(0)
-    df["brightness"] = pd.to_numeric(df["brightness"], errors="coerce").fillna(300)
-    df = df.dropna(subset=["latitude", "longitude"])
-
-    print(f"[Seed] Loaded {len(df)} demo hotspot records from {DEMO_CSV_PATH.name}")
-    return df.reset_index(drop=True)
+    # Force source to demo and update timestamps to look fresh
+    from datetime import datetime, date
+    today_str = date.today().strftime("%Y-%m-%d")
+    
+    # Let's ensure at least a few are marked persistent
+    for i, r in enumerate(records):
+        r["source"] = "demo"
+        # Make a few of them persistent (index 0 and 1 are Hazira)
+        if i < 3:
+            r["is_persistent"] = 1
+        else:
+            r["is_persistent"] = 0
+            
+    print(f"[Seed] Loaded {len(records)} fully-processed demo hotspot records from {DEMO_JSON_PATH.name}")
+    return records

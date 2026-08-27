@@ -11,12 +11,14 @@ const INDIA_BOUNDS  = [[6.5, 68.0], [37.5, 97.5]];
 const MARKER_MIN_ZOOM = 7; // markers only appear when zoomed in this far
 
 // ── Tile layers ───────────────────────────────────────────────────────────────
-// Heatmap basemap: CartoDB Positron NO-labels (ultra-clean, no competing text)
-const HEATMAP_TILES   = 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
-// City/border labels only — placed above heatmap so cities are still readable
-const LABEL_TILES     = 'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png';
-// Satellite basemap
+// Heatmap basemap: Esri World Light Gray (no key required, clean muted style)
+const HEATMAP_TILES   = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}';
+const HEATMAP_ATTR    = 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ';
+// Reference overlay: city/border labels on top of heatmap layer
+const LABEL_TILES     = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
+// Satellite basemap: Esri World Imagery (no key required)
 const SATELLITE_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const SATELLITE_ATTR  = 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community';
 
 // ── Marker helpers ────────────────────────────────────────────────────────────
 const CATEGORY_MAP = {
@@ -236,12 +238,12 @@ export default function Map({ hotspots = [], facilities = [], selectedHotspot, s
         {mapMode === 'heatmap' ? (
           <>
             {/* No-label base: only geography, zero competing text */}
-            <TileLayer url={HEATMAP_TILES} attribution="&copy; CARTO" />
+            <TileLayer url={HEATMAP_TILES} attribution={HEATMAP_ATTR} />
             {/* Labels layer rendered above heat so city names stay legible */}
-            <TileLayer url={LABEL_TILES}   attribution="" pane="overlayPane" />
+            <TileLayer url={LABEL_TILES}   attribution={HEATMAP_ATTR} pane="overlayPane" />
           </>
         ) : (
-          <TileLayer url={SATELLITE_TILES} attribution="Tiles &copy; Esri" />
+          <TileLayer url={SATELLITE_TILES} attribution={SATELLITE_ATTR} />
         )}
 
         {/* ── Heatmap visibility toggled smoothly via add/removeLayer ── */}

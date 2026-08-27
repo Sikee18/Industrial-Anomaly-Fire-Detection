@@ -10,7 +10,7 @@ export default function StatsBar({ source, setSource, onRefresh }) {
 
   const fetchStats = async () => {
     try {
-      const res = await fetch(`${API_URL}/stats`);
+      const res = await fetch(`${API_URL}/stats?source=${source}`);
       if (res.ok) {
         const data = await res.json();
         setStats(data);
@@ -37,19 +37,37 @@ export default function StatsBar({ source, setSource, onRefresh }) {
     setIngestStatus('ingesting');
     try {
       const endpoint = source === 'demo' ? '/ingest/demo' : '/ingest';
-      await fetch(`${API_URL}${endpoint}`, { method: 'POST' });
-      // Wait a bit for backend to process, then refresh
-      setTimeout(async () => {
+      const res = await fetch(`${API_URL}${endpoint}`, { method: 'POST' });
+      const json = await res.json();
+
+      if (source === 'demo' || json.status === 'demo_ingestion_complete') {
+        // Demo ingest is synchronous — data is ready immediately
         await handleRefresh();
         setIngestStatus('success');
-        setTimeout(() => setIngestStatus('idle'), 3000);
-      }, 3000);
+      } else {
+        // Live ingest runs in background thread — poll until new data appears
+        let attempts = 0;
+        const poll = async () => {
+          attempts++;
+          await handleRefresh();
+          const statsRes = await fetch(`${API_URL}/stats?source=${source}`);
+          const stats = await statsRes.json();
+          if (stats.total_hotspots > 0 || attempts >= 6) {
+            setIngestStatus('success');
+          } else {
+            setTimeout(poll, 5000); // retry every 5s up to 30s
+          }
+        };
+        setTimeout(poll, 3000); // give background thread a 3s head start
+      }
+      setTimeout(() => setIngestStatus('idle'), 3000);
     } catch (e) {
-      console.error("Ingest failed", e);
+      console.error('Ingest failed', e);
       setIngestStatus('error');
       setTimeout(() => setIngestStatus('idle'), 3000);
     }
   };
+
 
   return (
     <div className="flex items-center gap-6 h-full text-sm">

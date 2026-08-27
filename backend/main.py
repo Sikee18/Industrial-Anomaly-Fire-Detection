@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: init DB and run initial data ingestion."""
+    """Startup: init DB and run initial data ingestion in background thread."""
+    import threading
     logger.info("Starting Industrial Fire Detection & Monitoring System...")
 
     # Initialize SQLite database
@@ -45,17 +46,21 @@ async def lifespan(app: FastAPI):
         logger.warning("FIRMS_API_KEY not set — starting in DEMO mode.")
         demo_mode = True
 
-    # Run initial ingestion pipeline
-    try:
-        _run_ingestion_pipeline(days=3, demo_mode=demo_mode)
-    except Exception as e:
-        logger.error(f"Initial ingestion failed: {e}. Trying demo mode fallback...")
+    # Run ingestion in a background thread so the API becomes ready immediately
+    def _startup_ingest():
         try:
-            _run_ingestion_pipeline(days=3, demo_mode=True)
-        except Exception as e2:
-            logger.error(f"Demo ingestion also failed: {e2}")
+            _run_ingestion_pipeline(days=3, demo_mode=demo_mode)
+        except Exception as e:
+            logger.error(f"Startup ingestion failed: {e}. Trying demo fallback...")
+            try:
+                _run_ingestion_pipeline(days=3, demo_mode=True)
+            except Exception as e2:
+                logger.error(f"Demo ingestion also failed: {e2}")
 
-    logger.info("Startup complete. API ready.")
+    t = threading.Thread(target=_startup_ingest, daemon=True)
+    t.start()
+
+    logger.info("Startup complete. API ready. Ingestion running in background.")
     yield
     logger.info("Shutting down.")
 

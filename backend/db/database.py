@@ -192,20 +192,25 @@ def get_facilities(limit: int = 5000) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_stats() -> dict:
+def get_stats(source: str = None) -> dict:
     conn = get_connection()
-    total = conn.execute("SELECT COUNT(*) FROM hotspots").fetchone()[0]
+    
+    where_clause = "WHERE source = ?" if source else ""
+    and_clause = f"AND source = '{source}'" if source else ""
+    params = (source,) if source else ()
+    
+    total = conn.execute(f"SELECT COUNT(*) FROM hotspots {where_clause}", params).fetchone()[0]
     industrial = conn.execute(
-        "SELECT COUNT(*) FROM hotspots WHERE classification = 'Industrial Fire'"
+        f"SELECT COUNT(*) FROM hotspots WHERE classification = 'Industrial Fire' {and_clause}"
     ).fetchone()[0]
     gas_flares = conn.execute(
-        "SELECT COUNT(*) FROM hotspots WHERE classification = 'Gas Flare'"
+        f"SELECT COUNT(*) FROM hotspots WHERE classification = 'Gas Flare' {and_clause}"
     ).fetchone()[0]
     persistent = conn.execute(
-        "SELECT COUNT(*) FROM hotspots WHERE is_persistent = 1"
+        f"SELECT COUNT(*) FROM hotspots WHERE is_persistent = 1 {and_clause}"
     ).fetchone()[0]
     high_risk = conn.execute(
-        "SELECT COUNT(*) FROM hotspots WHERE severity = 'High'"
+        f"SELECT COUNT(*) FROM hotspots WHERE severity = 'High' {and_clause}"
     ).fetchone()[0]
     facilities_count = conn.execute(
         "SELECT COUNT(*) FROM industrial_facilities"

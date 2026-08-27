@@ -217,8 +217,10 @@ def _classify_single(
     """
     frp = float(row.get("frp", 0) or 0)
     brightness = float(row.get("brightness", 300) or 300)
-    lat = row.geometry.centroid.y if hasattr(row.geometry, "centroid") else row.geometry.y
-    lon = row.geometry.centroid.x if hasattr(row.geometry, "centroid") else row.geometry.x
+    
+    # Use the original WGS84 lat/lon for APIs, not the projected UTM coordinates
+    lat = float(row.get("latitude", 0) or 0)
+    lon = float(row.get("longitude", 0) or 0)
 
     # ── Step 1: Find nearest industrial facility ──────────────────────────────
     dist_km = 9999.0
@@ -249,7 +251,7 @@ def _classify_single(
         recurrence_count = unique_dates
         is_recurring = unique_dates >= 3
 
-    # ── Step 3: Land cover inference (ESA WorldCover GeoTIFF) ─────────────────
+    # ── Step 3: Land cover inference (Planetary Computer STAC API) ────────────────
     land_cover = get_land_cover(lat, lon)
 
     # ── Step 4: ML Classification via RandomForest ─────────────────────────────

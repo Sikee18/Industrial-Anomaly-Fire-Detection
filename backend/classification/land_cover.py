@@ -1,4 +1,3 @@
-import os
 import logging
 import requests
 from typing import Optional
@@ -10,12 +9,6 @@ except ImportError:
     HAS_RASTERIO = False
 
 logger = logging.getLogger(__name__)
-
-# Configurable path to the GeoTIFF
-WORLDCOVER_TIF_PATH = os.getenv("WORLDCOVER_TIF_PATH", "data/ESA_WorldCover_10m_2021_v200.tif")
-
-# Global dataset reference to avoid loading per-call
-LC_DATASET = None
 
 # ESA WorldCover 2021 v200 class code legend
 # https://esa-worldcover.org
@@ -33,40 +26,69 @@ ESA_LEGEND = {
     100: "Moss/Lichen"
 }
 
-# OpenLandMap API endpoint
-# Layer: lcv_landcover.hcl_wur.lidong2019_p_30m_s0..0cm_2018_v0.1
-OLM_LEGEND = {
-    1: "Tree cover",
-    2: "Tree cover",
-    3: "Tree cover",
-    4: "Tree cover",
-    5: "Tree cover",
-    6: "Shrubland",
-    7: "Grassland",
-    8: "Cropland",
-    9: "Built-up",
-    10: "Bare/sparse vegetation",
-    11: "Barren/Desert",
-    12: "Water",
-}
-
 _LC_CACHE = {}
 
 def get_land_cover(lat: float, lon: float) -> str:
     """
-    Retrieve land cover label for given lat/lon using a fast local heuristic.
-    Uses a regional lookup table for India — zero latency, no external API calls.
-    The OpenLandMap API was tested but returned 404 for this layer, so we use
-    this instant fallback which is comprehensive for India.
+    Retrieve land cover label for given lat/lon using Microsoft Planetary Computer 
+    ESA WorldCover STAC endpoint.
+    Falls back to a coarse bounding-box heuristic if the API fails or rasterio is missing.
     """
     cache_key = (round(lat, 2), round(lon, 2))
     if cache_key in _LC_CACHE:
         return _LC_CACHE[cache_key]
 
-    lc_str = _infer_land_cover_fallback(lat, lon)
-    _LC_CACHE[cache_key] = lc_str
-    return lc_str
+    if not HAS_RASTERIO:
+        logger.warning("[LandCover] rasterio not installed. Falling back to heuristic.")
+        lc_str = _infer_land_cover_fallback(lat, lon)
+        _LC_CACHE[cache_key] = lc_str
+        return lc_str
 
+    try:
+        # 1. Query STAC API for the ESA WorldCover tile intersecting this point
+        stac_url = "https://planetarycomputer.microsoft.com/api/stac/v1/search"
+        payload = {
+            "collections": ["esa-worldcover"],
+            "intersects": {
+                "type": "Point",
+                "coordinates": [lon, lat]
+            },
+            "limit": 1
+        }
+        resp = requests.post(stac_url, json=payload, timeout=3.0)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        if not data.get("features"):
+            logger.warning(f"[LandCover] No STAC feature found for {lat}, {lon}. Using fallback.")
+            lc_str = _infer_land_cover_fallback(lat, lon)
+            _LC_CACHE[cache_key] = lc_str
+            return lc_str
+            
+        feature = data["features"][0]
+        href = feature["assets"]["map"]["href"]
+        
+        # 2. Get SAS Token
+        token_url = "https://planetarycomputer.microsoft.com/api/sas/v1/token/esa-worldcover"
+        token_resp = requests.get(token_url, timeout=2.0)
+        token_resp.raise_for_status()
+        sas_token = token_resp.json().get("token")
+        
+        signed_href = f"{href}?{sas_token}"
+        
+        # 3. Sample the Cloud Optimized GeoTIFF (COG)
+        with rasterio.open(signed_href) as ds:
+            val = next(ds.sample([(lon, lat)]))[0]
+            
+        lc_str = ESA_LEGEND.get(int(val), "Unknown")
+        _LC_CACHE[cache_key] = lc_str
+        return lc_str
+        
+    except Exception as e:
+        logger.error(f"[LandCover] Planetary Computer lookup failed for {lat}, {lon}: {e}. Using fallback.")
+        lc_str = _infer_land_cover_fallback(lat, lon)
+        _LC_CACHE[cache_key] = lc_str
+        return lc_str
 
 def _infer_land_cover_fallback(lat: float, lon: float) -> str:
     """

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const API_URL = 'http://localhost:8000/api';
 
@@ -7,7 +7,7 @@ export function useHotspots(source = 'live') {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const fetchHotspots = async () => {
+  const fetchHotspots = useCallback(async () => {
     setLoading(true);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000); // 10s timeout
@@ -22,8 +22,10 @@ export function useHotspots(source = 'live') {
       setError(null);
     } catch (err) {
       if (err.name === 'AbortError') {
-        console.warn('Hotspot fetch timed out — backend may be busy ingesting.');
-        setError('Backend busy. Retrying in 15s...');
+        console.warn('Hotspot fetch timed out — backend may be busy ingesting. Retrying in 15s...');
+        setError('Backend busy — retrying...');
+        // Retry once after 15s automatically
+        setTimeout(fetchHotspots, 15000);
       } else {
         console.error(err);
         setError(err.message);
@@ -32,14 +34,14 @@ export function useHotspots(source = 'live') {
       clearTimeout(timer);
       setLoading(false);
     }
-  };
+  }, [source]);
 
   useEffect(() => {
     fetchHotspots();
-    // Auto refresh every 60s
+    // Auto-refresh every 60s
     const interval = setInterval(fetchHotspots, 60000);
     return () => clearInterval(interval);
-  }, [source]);
+  }, [fetchHotspots]);
 
   return { data, loading, error, refetch: fetchHotspots };
 }

@@ -176,10 +176,9 @@ def get_alerts(limit: int = Query(50, ge=1, le=500)):
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 @router.get("/stats")
-def get_summary_stats():
-    """Return summary KPI statistics."""
-    stats = get_stats()
-    return stats
+def get_stats_route(source: str = Query(None, description="Filter by source (live or demo)")):
+    """Return system-wide statistics for the dashboard."""
+    return get_stats(source=source)
 
 
 # ── Ingest ────────────────────────────────────────────────────────────────────
@@ -213,13 +212,25 @@ def trigger_ingest(days: int = Query(3, ge=1, le=10)):
 
 @router.post("/ingest/demo")
 def trigger_demo_ingest():
-    """Load demo seed data into the database in a background thread."""
-    global _ingest_running
-    if _ingest_running:
-        return {"status": "already_running", "message": "Ingest already in progress"}
-    t = threading.Thread(target=_run_ingest_thread, args=(3, True), daemon=True)
-    t.start()
-    return {"status": "demo_ingestion_started"}
+    """Load demo seed data directly into the database synchronously and instantly."""
+    from ingestion.seed_demo_data import load_demo_hotspots
+    from ingestion.osm_client import _seed_facilities
+    from db.database import insert_facilities, clear_hotspots, insert_hotspots
+    
+    # 1. We still need some facilities in DB for the UI, let's just make sure there's data
+    # The user says: "Include matching facility data (from your existing seed facilities...)"
+    # We can just run _seed_facilities which returns the static list instantly
+    facilities_df = _seed_facilities()
+    if not facilities_df.empty:
+        insert_facilities(facilities_df.to_dict("records"))
+        
+    # 2. Clear old demo hotspots and insert the pre-classified JSON
+    records = load_demo_hotspots()
+    if records:
+        clear_hotspots("demo")
+        insert_hotspots(records)
+        return {"status": "demo_ingestion_complete", "inserted": len(records)}
+    return {"status": "error", "message": "Failed to load demo data"}
 
 
 def _run_ingestion_pipeline(days: int = 3, demo_mode: bool = False):
@@ -247,17 +258,14 @@ def _run_ingestion_pipeline(days: int = 3, demo_mode: bool = False):
     if demo_mode:
         hotspots_df = load_demo_hotspots()
         source_label = "demo"
-        clear_hotspots("demo")
     else:
         try:
             hotspots_df = fetch_multi_source(days=days)
             source_label = "live"
-            clear_hotspots("live")
         except Exception as e:
             print(f"[Pipeline] Live fetch failed ({e}), falling back to demo data.")
             hotspots_df = load_demo_hotspots()
             source_label = "demo"
-            clear_hotspots("demo")
 
     if hotspots_df.empty:
         print("[Pipeline] No hotspots to process.")
@@ -297,6 +305,10 @@ def _run_ingestion_pipeline(days: int = 3, demo_mode: bool = False):
     scored_df["wind_speed"] = scored_df.get("wind_speed", pd.Series([5.0]*len(scored_df)))
 
     records = scored_df[required_cols].to_dict("records")
+    
+    # Clear old data ONLY when the new data is fully ready to be inserted
+    clear_hotspots(source_label)
+    
     inserted = insert_hotspots(records)
     print(f"[Pipeline] Stored {inserted} hotspot records.")
     print(f"{'='*50}\n")
