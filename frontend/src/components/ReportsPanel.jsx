@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { Download, Activity, AlertTriangle, FileText, BarChart2 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
-const API_URL = 'http://localhost:8000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 export default function ReportsPanel({ hotspots = [], source, onClose }) {
   const handleDownload = () => {

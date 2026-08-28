@@ -28,8 +28,8 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # Severity bands — recalibrated for real-world FIRMS data
-SEVERITY_HIGH   = 55
-SEVERITY_MEDIUM = 28
+SEVERITY_HIGH   = 18
+SEVERITY_MEDIUM = 10
 
 # FRP normalization cap (MW) — real VIIRS values rarely exceed 150 MW
 FRP_CAP = 100.0

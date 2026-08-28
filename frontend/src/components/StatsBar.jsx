@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Flame, Factory, Database, RefreshCw, BarChart2 } from 'lucide-react';
 
-const API_URL = 'http://localhost:8000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 export default function StatsBar({ source, setSource, onRefresh }) {
   const [stats, setStats] = useState(null);

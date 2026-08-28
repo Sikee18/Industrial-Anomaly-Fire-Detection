@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, Flame, Loader2, ChevronDown } from 'lucide-react';
 
-const API_URL = 'http://localhost:8000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 const QUICK_PROMPTS = [
   "Show me the highest-risk events",
@@ -35,9 +35,46 @@ export default function PyroChat({ source }) {
     }
   }, [isOpen]);
 
+  const [typingContent, setTypingContent] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const typingRef = useRef(null);
+
+  // Animate text word-by-word for a fast "streaming" feel
+  const animateTyping = (fullText) => {
+    const words = fullText.split(' ');
+    let idx = 0;
+    setIsTyping(true);
+    setTypingContent('');
+
+    const tick = () => {
+      if (idx < words.length) {
+        const chunk = words.slice(0, idx + 1).join(' ');
+        setTypingContent(chunk);
+        idx++;
+        // Speed: first 10 words fast (20ms), rest near-instant (8ms)
+        const delay = idx <= 10 ? 22 : 8;
+        typingRef.current = setTimeout(tick, delay);
+      } else {
+        setIsTyping(false);
+        setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = { role: 'assistant', content: fullText };
+          return updated;
+        });
+        setTypingContent('');
+      }
+    };
+    tick();
+  };
+
   const sendMessage = async (text) => {
     const messageText = text || input.trim();
     if (!messageText || loading) return;
+
+    // Clear any ongoing typing animation
+    if (typingRef.current) clearTimeout(typingRef.current);
+    setIsTyping(false);
+    setTypingContent('');
 
     const userMessage = { role: 'user', content: messageText };
     const newMessages = [...messages, userMessage];
@@ -46,10 +83,9 @@ export default function PyroChat({ source }) {
     setLoading(true);
 
     try {
-      // Build history (exclude the initial system greeting)
       const history = newMessages
-        .slice(1) // skip intro message for cleaner context
-        .slice(0, -1) // exclude the just-added user msg
+        .slice(1)
+        .slice(0, -1)
         .map(m => ({ role: m.role, content: m.content }));
 
       const res = await fetch(`${API_URL}/chat`, {
@@ -60,10 +96,13 @@ export default function PyroChat({ source }) {
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+
+      // Add placeholder message, then animate it
+      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+      setLoading(false);
+      animateTyping(data.reply);
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'assistant', content: "I'm sorry, I couldn't reach the backend. Please ensure the server is running." }]);
-    } finally {
+      setMessages(prev => [...prev, { role: 'assistant', content: "I couldn't reach the backend. Please ensure the server is running." }]);
       setLoading(false);
     }
   };
@@ -123,27 +162,40 @@ export default function PyroChat({ source }) {
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
-            {messages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
-                  msg.role === 'user'
-                    ? 'bg-blue-600 text-white rounded-br-sm'
-                    : 'bg-slate-800 text-slate-100 border border-slate-700 rounded-bl-sm'
-                }`}>
-                  {msg.role === 'assistant' ? (
-                    <div dangerouslySetInnerHTML={{ __html: formatContent(msg.content) }} />
-                  ) : (
-                    msg.content
-                  )}
+            {messages.map((msg, i) => {
+              const isLastAssistant = i === messages.length - 1 && msg.role === 'assistant';
+              const displayContent = isLastAssistant && isTyping ? typingContent : msg.content;
+              return (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
+                    msg.role === 'user'
+                      ? 'bg-blue-600 text-white rounded-br-sm'
+                      : 'bg-slate-800 text-slate-100 border border-slate-700 rounded-bl-sm'
+                  }`}>
+                    {msg.role === 'assistant' ? (
+                      <div>
+                        <span dangerouslySetInnerHTML={{ __html: formatContent(displayContent) }} />
+                        {isLastAssistant && isTyping && (
+                          <span className="inline-block w-1.5 h-3.5 bg-red-400 ml-0.5 align-middle animate-pulse rounded-sm" />
+                        )}
+                      </div>
+                    ) : (
+                      msg.content
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {loading && (
               <div className="flex justify-start">
                 <div className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 text-red-400 animate-spin" />
-                  <span className="text-slate-400 text-sm">Pyro is analyzing...</span>
+                  <div className="flex gap-1">
+                    <span className="w-1.5 h-1.5 bg-red-400 rounded-full animate-bounce" style={{animationDelay:'0ms'}} />
+                    <span className="w-1.5 h-1.5 bg-red-400 rounded-full animate-bounce" style={{animationDelay:'150ms'}} />
+                    <span className="w-1.5 h-1.5 bg-red-400 rounded-full animate-bounce" style={{animationDelay:'300ms'}} />
+                  </div>
+                  <span className="text-slate-400 text-sm">Pyro is thinking...</span>
                 </div>
               </div>
             )}
