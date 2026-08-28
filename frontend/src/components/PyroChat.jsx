@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, Flame, Loader2, ChevronDown } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+const _base = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '');
+const API_URL = `${_base}/api`;
 
 const QUICK_PROMPTS = [
   "Show me the highest-risk events",

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+const _base = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '');
+const API_URL = `${_base}/api`;
 
 export function useFacilities() {
   const [data, setData] = useState(null);
