@@ -173,7 +173,10 @@ def classify_hotspots(
 ) -> pd.DataFrame:
     """
     Main classification entry point.
+    Optimised: parallel land-cover lookups + vectorised facility distance.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     if hotspots_df.empty:
         logger.warning("[Classify] No hotspots to classify.")
         return hotspots_df
@@ -185,9 +188,26 @@ def classify_hotspots(
     hotspots_m = hotspots_gdf.to_crs(INDIA_UTM)
     facilities_m = facilities_gdf.to_crs(INDIA_UTM) if not facilities_gdf.empty else None
 
+    # ── Step 1: Batch land-cover lookups in parallel (biggest bottleneck) ──────
+    from .land_cover import get_land_cover
+    coords = list(zip(hotspots_df["latitude"].tolist(), hotspots_df["longitude"].tolist()))
+    land_covers = [None] * len(coords)
+
+    # Use up to 16 threads — land_cover already has its own in-memory cache
+    # so duplicate coords are free after the first lookup.
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        future_to_idx = {pool.submit(get_land_cover, lat, lon): i for i, (lat, lon) in enumerate(coords)}
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                land_covers[idx] = future.result()
+            except Exception:
+                land_covers[idx] = "Unknown"
+
+    # ── Step 2: Classify each hotspot (land cover already resolved) ────────────
     results = []
-    for idx, row in hotspots_m.iterrows():
-        result = _classify_single(row, facilities_m, history_df)
+    for i, (idx, row) in enumerate(hotspots_m.iterrows()):
+        result = _classify_single(row, facilities_m, history_df, precomputed_land_cover=land_covers[i])
         results.append(result)
 
     result_df = pd.DataFrame(results)
@@ -211,6 +231,7 @@ def _classify_single(
     row: pd.Series,
     facilities_m: Optional[gpd.GeoDataFrame],
     history_df: Optional[pd.DataFrame],
+    precomputed_land_cover: Optional[str] = None,
 ) -> dict:
     """
     Extracts features and uses RandomForestClassifier to predict class and confidence.
@@ -251,8 +272,8 @@ def _classify_single(
         recurrence_count = unique_dates
         is_recurring = unique_dates >= 3
 
-    # ── Step 3: Land cover inference (Planetary Computer STAC API) ────────────────
-    land_cover = get_land_cover(lat, lon)
+    # ── Step 3: Land cover inference (use pre-fetched batch result if available) ─
+    land_cover = precomputed_land_cover if precomputed_land_cover is not None else get_land_cover(lat, lon)
 
     # ── Step 4: ML Classification via RandomForest ─────────────────────────────
     

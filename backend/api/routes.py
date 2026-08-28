@@ -335,10 +335,15 @@ def chat_with_pyro(request: dict = Body(...)):
     # Parse manual dict to handle missing keys gracefully if needed
     chat_req = ChatRequest(**request)
     
-    # Fetch context data
-    stats = get_stats(source=chat_req.source)
-    hotspots = get_hotspots(source=chat_req.source, limit=5000)
-    top_events = sorted(hotspots, key=lambda x: x["risk_score"], reverse=True)[:5]
+    # Fetch context data only if not provided by frontend
+    stats = request.get("stats")
+    if not stats:
+        stats = get_stats(source=chat_req.source)
+        
+    top_events = request.get("top_events")
+    if not top_events:
+        hotspots = get_hotspots(source=chat_req.source, limit=5000)
+        top_events = sorted(hotspots, key=lambda x: x["risk_score"], reverse=True)[:5]
     
     reply = generate_pyro_response(chat_req, stats, top_events)
     return {"reply": reply}
